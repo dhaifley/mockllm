@@ -11,6 +11,7 @@ import (
 	"github.com/openai/openai-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/genai"
 )
 
 // For now, we'll use a simple approach where we create mocks with JSON-compatible structures
@@ -89,7 +90,7 @@ func TestSimpleOpenAIMock(t *testing.T) {
 	// Check response
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var responseBody map[string]interface{}
+	var responseBody map[string]any
 	err = json.NewDecoder(resp.Body).Decode(&responseBody)
 	require.NoError(t, err)
 
@@ -169,12 +170,144 @@ func TestSimpleAnthropicMock(t *testing.T) {
 	// Check response
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var responseBody map[string]interface{}
+	var responseBody map[string]any
 	err = json.NewDecoder(resp.Body).Decode(&responseBody)
 	require.NoError(t, err)
 
 	assert.Equal(t, "msg_123", responseBody["id"])
 	assert.Equal(t, "message", responseBody["type"])
+}
+
+// func TestStartServer(t *testing.T) {
+// 	googleRequest := mockllm.GoogleRequestBody{
+// 		Contents: []genai.Content{
+// 			{
+// 				Role:  "user",
+// 				Parts: []*genai.Part{{Text: "Hello"}},
+// 			},
+// 		},
+// 	}
+
+// 	googleResponse := genai.GenerateContentResponse{
+// 		Candidates: []*genai.Candidate{{
+// 			Content: &genai.Content{
+// 				Role:  "assistant",
+// 				Parts: []*genai.Part{{Text: "Hello! How can I assist you today?"}},
+// 			},
+// 			Index:        0,
+// 			FinishReason: "end_turn",
+// 		}},
+// 		ResponseID:   "msg_123",
+// 		ModelVersion: "gemini-2.5-flash",
+// 	}
+
+// 	var mock mockllm.GoogleMock
+// 	mock.Name = "test-response"
+// 	mock.Response = googleResponse
+// 	mock.Match = mockllm.GoogleRequestMatch{
+// 		MatchType: mockllm.MatchTypeExact,
+// 		Content:   googleRequest.Contents[len(googleRequest.Contents)-1],
+// 	}
+
+// 	reqBytes, err := json.Marshal(googleRequest)
+// 	require.NoError(t, err)
+// 	err = json.Unmarshal(reqBytes, &mock.Match)
+// 	require.NoError(t, err)
+
+// 	config := mockllm.Config{
+// 		Google: []mockllm.GoogleMock{mock},
+// 	}
+
+// 	// Start server
+// 	server := mockllm.NewServer(config)
+// 	baseURL, err := server.Start(t.Context())
+// 	require.NoError(t, err)
+
+// 	defer func() {
+// 		err := server.Stop()
+// 		require.NoError(t, err)
+// 	}()
+
+// 	fmt.Println("Server started at:", baseURL)
+
+// 	sigCh := make(chan os.Signal, 1)
+// 	signal.Notify(sigCh, os.Interrupt)
+// 	<-sigCh
+// }
+
+func TestSimpleGoogleMock(t *testing.T) {
+	googleRequest := mockllm.GoogleRequestBody{
+		Contents: []genai.Content{
+			{
+				Role:  "user",
+				Parts: []*genai.Part{{Text: "Hello"}},
+			},
+		},
+	}
+
+	googleResponse := genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{{
+			Content: &genai.Content{
+				Role:  "assistant",
+				Parts: []*genai.Part{{Text: "Hello! How can I assist you today?"}},
+			},
+			Index:        0,
+			FinishReason: "end_turn",
+		}},
+		ResponseID:   "msg_123",
+		ModelVersion: "gemini-2.5-flash",
+	}
+
+	var mock mockllm.GoogleMock
+	mock.Name = "test-response"
+	mock.Response = googleResponse
+	mock.Match = mockllm.GoogleRequestMatch{
+		MatchType: mockllm.MatchTypeExact,
+		Content:   googleRequest.Contents[len(googleRequest.Contents)-1],
+	}
+
+	reqBytes, err := json.Marshal(googleRequest)
+	require.NoError(t, err)
+	err = json.Unmarshal(reqBytes, &mock.Match)
+	require.NoError(t, err)
+
+	config := mockllm.Config{
+		Google: []mockllm.GoogleMock{mock},
+	}
+
+	// Start server
+	server := mockllm.NewServer(config)
+	baseURL, err := server.Start(t.Context())
+	require.NoError(t, err)
+
+	defer func() {
+		err := server.Stop()
+		require.NoError(t, err)
+	}()
+
+	// Make request
+	req, err := http.NewRequest("POST", baseURL+"/v1beta/models/gemini-2.5-flash:generateContent", bytes.NewReader(reqBytes))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("google-api-key", "test-key")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+
+	defer func() {
+		err := resp.Body.Close()
+		require.NoError(t, err)
+	}()
+
+	// Check response
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var responseBody map[string]any
+	err = json.NewDecoder(resp.Body).Decode(&responseBody)
+	require.NoError(t, err)
+
+	assert.Equal(t, "msg_123", responseBody["responseId"])
 }
 
 func TestHealthCheck(t *testing.T) {
@@ -190,7 +323,7 @@ func TestHealthCheck(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var responseBody map[string]interface{}
+	var responseBody map[string]any
 	err = json.NewDecoder(resp.Body).Decode(&responseBody)
 	require.NoError(t, err)
 
