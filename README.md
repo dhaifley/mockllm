@@ -3,7 +3,7 @@
 This document describes the current implementation of a simple mock LLM server for end-to-end tests. It provides basic request/response mocking for OpenAI and Anthropic APIs using their official SDK types.
 
 ### Goals
-- Support OpenAI Chat Completions API and Anthropic Messages API request/response schemas.
+- Support OpenAI Chat Completions API, Anthropic Messages API, and Google Generate Content API request/response schemas.
 - Simple configuration using Go structs with official SDK types.
 - Deterministic responses for testing without network calls.
 - Minimal setup for basic testing scenarios.
@@ -11,6 +11,7 @@ This document describes the current implementation of a simple mock LLM server f
 ### Current Implementation Status
 - ✅ Basic OpenAI Chat Completions API support (non-streaming)
 - ✅ Basic Anthropic Messages API support (non-streaming)
+- ✅ Basic Google Generate Content API support (non-streaming)
 - ✅ Simple exact and contains matching
 - ✅ In-memory configuration using Go structs
 - ✅ Tool/function calls
@@ -32,11 +33,13 @@ Current implementation uses these core types:
 - `Config`: Root configuration containing arrays of OpenAI and Anthropic mocks
 - `OpenAIMock`: Maps OpenAI requests to responses using official SDK types
 - `AnthropicMock`: Maps Anthropic requests to responses using official SDK types
+- `GoogleMock`: Maps Google requests to responses using official SDK types
 
 #### Matching
 - `MatchType`: Enum for matching strategies (`exact`, `contains`)
 - `OpenAIRequestMatch`: Defines how to match OpenAI requests (match type + message)
 - `AnthropicRequestMatch`: Defines how to match Anthropic requests (match type + message)
+- `GoogleRequestMatch`: Defines how to match Google requests (match type + message)
 
 ### Provider Coverage
 
@@ -54,6 +57,13 @@ Current implementation uses these core types:
 - **Request Type**: `anthropic.MessageNewParams`
 - **Response Type**: `anthropic.Message`
 - **Matching**: Exact matching on the last message in the conversation (contains not implemented)
+
+#### Google Generate Content API
+- **Endpoint**: `POST /v1beta/models/{model}:generateContent`
+- **Auth**: `Authorization: Bearer <token>` (presence check only)
+- **Request Type**: `[]genai.Content`
+- **Response Type**: `genai.GenerateContentResponse`
+- **Matching**: Exact or contains matching on the last message in the conversation
 
 ### Configuration
 
@@ -144,7 +154,7 @@ Simple linear search through mocks:
 2. Iterate through provider-specific mocks in order
 3. For each mock, check if the match criteria are met:
    - **Exact**: JSON comparison of the last message
-   - **Contains**: String contains check on message content (OpenAI only)
+   - **Contains**: String contains check on message content
 4. Return the response from the first matching mock
 5. Return 404 if no match found
 
@@ -160,6 +170,7 @@ Current implementation consists of:
 - `types.go` — Core configuration types using official SDK types
 - `openai.go` — OpenAI provider handler and matching logic
 - `anthropic.go` — Anthropic provider handler and matching logic
+- `google.go` — Google provider handler and matching logic
 - `server_test.go` — Basic integration tests
 
 ### Running in Tests
@@ -175,6 +186,7 @@ defer server.Stop()
 ### SDK Dependencies
 - **OpenAI Go SDK**: `github.com/openai/openai-go`
 - **Anthropic Go SDK**: `github.com/anthropics/anthropic-sdk-go`
+- **Google Go SDK**: `google.golang.org/genai`
 - **HTTP Router**: `github.com/gorilla/mux`
 
 ### Limitations of Current Implementation
