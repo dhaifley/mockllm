@@ -1,7 +1,6 @@
 package mockllm
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -45,8 +44,8 @@ func (p *AnthropicProvider) Handle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No matching mock found", http.StatusNotFound)
 		return
 	}
-	p.handleNonStreamingResponse(w, mock.Response)
 
+	handleNonStreamingResponse(w, mock.Response)
 }
 
 // findMatchingMock finds the first mock that matches the request
@@ -61,37 +60,9 @@ func (p *AnthropicProvider) findMatchingMock(request anthropic.MessageNewParams)
 
 // requestsMatch checks if two requests are equivalent
 func (p *AnthropicProvider) requestsMatch(expected AnthropicRequestMatch, actual anthropic.MessageNewParams) bool {
-	// Simple deep equal comparison for now
-	// In the future, we could add more sophisticated matching
-	switch expected.MatchType {
-	case MatchTypeExact:
-		// get Last message from actual
-		if len(actual.Messages) == 0 {
-			return false
-		}
-		lastMessage := actual.Messages[len(actual.Messages)-1]
-		// Check json is equal
-		jsonExpected, err := json.Marshal(expected.Message)
-		if err != nil {
-			return false
-		}
-		jsonActual, err := json.Marshal(lastMessage)
-		if err != nil {
-			return false
-		}
-		return bytes.Equal(jsonExpected, jsonActual)
-	case MatchTypeContains:
-		panic("not implemented")
+	if len(actual.Messages) == 0 {
+		return false
 	}
-	return false
-}
 
-// handleNonStreamingResponse sends a JSON response
-func (p *AnthropicProvider) handleNonStreamingResponse(w http.ResponseWriter, response interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
-	}
+	return compareMessages(expected.MatchType, expected.Message, actual.Messages[len(actual.Messages)-1])
 }
