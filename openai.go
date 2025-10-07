@@ -37,7 +37,7 @@ func (p *OpenAIProvider) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return the response
-	p.handleNonStreamingResponse(w, mock.Response)
+	handleNonStreamingResponse(w, mock.Response)
 }
 
 // findMatchingMock finds the first mock that matches the request
@@ -91,15 +91,5 @@ func (p *OpenAIProvider) requestsMatch(expected OpenAIRequestMatch, actual opena
 		return strings.Contains(*strActual, *strExpected)
 	default:
 		return false
-	}
-}
-
-// handleNonStreamingResponse sends a JSON response
-func (p *OpenAIProvider) handleNonStreamingResponse(w http.ResponseWriter, response interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 	}
 }

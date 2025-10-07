@@ -17,6 +17,7 @@ type Server struct {
 	config            Config
 	openaiProvider    *OpenAIProvider
 	anthropicProvider *AnthropicProvider
+	googleProvider    *GoogleProvider
 	router            *mux.Router
 	listener          net.Listener
 }
@@ -42,10 +43,20 @@ func NewServer(config Config) *Server {
 		})
 	}
 
+	var googleMocks []GoogleMock
+	for _, mock := range config.Google {
+		googleMocks = append(googleMocks, GoogleMock{
+			Name:     mock.Name,
+			Match:    mock.Match,
+			Response: mock.Response,
+		})
+	}
+
 	return &Server{
 		config:            config,
 		openaiProvider:    NewOpenAIProvider(openaiMocks),
 		anthropicProvider: NewAnthropicProvider(anthropicMocks),
+		googleProvider:    NewGoogleProvider(googleMocks),
 	}
 }
 
@@ -123,6 +134,9 @@ func (s *Server) setupRoutes() {
 	// Anthropic Messages API
 	r.HandleFunc("/v1/messages", s.anthropicProvider.Handle).Methods("POST")
 
+	// Google Generate Content API
+	r.HandleFunc("/v1beta/models/{model}:generateContent", s.googleProvider.Handle).Methods("POST")
+
 	// Debug route
 	r.NotFoundHandler = http.HandlerFunc(s.handleNotFound)
 
@@ -132,21 +146,38 @@ func (s *Server) setupRoutes() {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{ //nolint:errcheck
+
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"status":    "healthy",
 		"service":   "mock-llm",
 		"openai":    len(s.config.OpenAI),
 		"anthropic": len(s.config.Anthropic),
-	})
+		"google":    len(s.config.Google),
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+	}
 }
 
 func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotFound)
-	json.NewEncoder(w).Encode(map[string]interface{}{ //nolint:errcheck
+
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"error":  "Endpoint not found",
 		"path":   r.URL.Path,
 		"method": r.Method,
-		"hint":   "Supported: /v1/chat/completions (OpenAI), /v1/messages (Anthropic)",
-	})
+		"hint":   "Supported: /v1/chat/completions (OpenAI), /v1/messages (Anthropic), /v1beta/models/{model}:generateContent (Google)",
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
+// handleNonStreamingResponse sends a JSON response.
+func handleNonStreamingResponse(w http.ResponseWriter, response any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+	}
 }
