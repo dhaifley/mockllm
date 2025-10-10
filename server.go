@@ -2,6 +2,7 @@ package mockllm
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -17,6 +18,7 @@ type Server struct {
 	config            Config
 	openaiProvider    *OpenAIProvider
 	anthropicProvider *AnthropicProvider
+	googleProvider    *GoogleProvider
 	router            *mux.Router
 	listener          net.Listener
 }
@@ -42,10 +44,20 @@ func NewServer(config Config) *Server {
 		})
 	}
 
+	var googleMocks []GoogleMock
+	for _, mock := range config.Google {
+		googleMocks = append(googleMocks, GoogleMock{
+			Name:     mock.Name,
+			Match:    mock.Match,
+			Response: mock.Response,
+		})
+	}
+
 	return &Server{
 		config:            config,
 		openaiProvider:    NewOpenAIProvider(openaiMocks),
 		anthropicProvider: NewAnthropicProvider(anthropicMocks),
+		googleProvider:    NewGoogleProvider(googleMocks),
 	}
 }
 
@@ -64,8 +76,22 @@ func LoadConfigFromFile(path string, filesys fs.ReadFileFS) (Config, error) {
 	return config, nil
 }
 
-// Start starts the server on a random available port and returns the base URL
+// StartTLS starts the server with TLS on a random available port and returns the base URL.
+func (s *Server) StartTLS(ctx context.Context,
+	certFile, keyFile string,
+) (string, error) {
+	return s.start(ctx, certFile, keyFile)
+}
+
+// Start starts the server on a random available port and returns the base URL.
 func (s *Server) Start(ctx context.Context) (string, error) {
+	return s.start(ctx, "", "")
+}
+
+// Starts the server on a random available port and returns the base URL.
+func (s *Server) start(ctx context.Context,
+	certFile, keyFile string,
+) (string, error) {
 	s.setupRoutes()
 
 	listenAddr := s.config.ListenAddr
@@ -79,14 +105,34 @@ func (s *Server) Start(ctx context.Context) (string, error) {
 	s.listener = listener
 
 	go func() {
-		if err := http.Serve(listener, s.router); err != nil && err != http.ErrServerClosed {
+		var err error
+
+		if certFile != "" && keyFile != "" {
+			err = http.ServeTLS(listener, s.router, certFile, keyFile)
+		} else {
+			err = http.Serve(listener, s.router)
+		}
+		if err != nil && err != http.ErrServerClosed {
 			fmt.Printf("Server error: %v\n", err)
 		}
 	}()
 
+	addr := listener.Addr().String()
+	if certFile != "" && keyFile != "" {
+		addr = "https://" + addr
+	} else {
+		addr = "http://" + addr
+	}
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		},
+	}
+
 	if err := RetryWithBackoff(
 		ctx, 5, 500*time.Millisecond, 5*time.Second, func() error {
-			resp, err := http.Get(fmt.Sprintf("http://%s/health", listener.Addr().String()))
+			resp, err := client.Get(addr + "/health")
 			if err != nil {
 				return err
 			}
@@ -99,8 +145,7 @@ func (s *Server) Start(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to health check server: %w", err)
 	}
 
-	baseURL := fmt.Sprintf("http://%s", listener.Addr().String())
-	return baseURL, nil
+	return addr, nil
 }
 
 // Stop stops the server
@@ -123,6 +168,9 @@ func (s *Server) setupRoutes() {
 	// Anthropic Messages API
 	r.HandleFunc("/v1/messages", s.anthropicProvider.Handle).Methods("POST")
 
+	// Google Generate Content API
+	r.HandleFunc("/v1beta/models/{model}", s.googleProvider.Handle).Methods("POST")
+
 	// Debug route
 	r.NotFoundHandler = http.HandlerFunc(s.handleNotFound)
 
@@ -132,21 +180,39 @@ func (s *Server) setupRoutes() {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{ //nolint:errcheck
+
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"status":    "healthy",
 		"service":   "mock-llm",
 		"openai":    len(s.config.OpenAI),
 		"anthropic": len(s.config.Anthropic),
-	})
+		"google":    len(s.config.Google),
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+	}
 }
 
 func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("MockLLM received unknown request:", r.Method, r.URL.Path)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotFound)
-	json.NewEncoder(w).Encode(map[string]interface{}{ //nolint:errcheck
+
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"error":  "Endpoint not found",
 		"path":   r.URL.Path,
 		"method": r.Method,
-		"hint":   "Supported: /v1/chat/completions (OpenAI), /v1/messages (Anthropic)",
-	})
+		"hint":   "Supported: /v1/chat/completions (OpenAI), /v1/messages (Anthropic), /v1beta/models/{model}:generateContent (Google)",
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
+// handleNonStreamingResponse sends a JSON response.
+func handleNonStreamingResponse(w http.ResponseWriter, response any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+	}
 }

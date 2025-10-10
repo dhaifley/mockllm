@@ -45,8 +45,8 @@ func (p *AnthropicProvider) Handle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No matching mock found", http.StatusNotFound)
 		return
 	}
-	p.handleNonStreamingResponse(w, mock.Response)
 
+	handleNonStreamingResponse(w, mock.Response)
 }
 
 // findMatchingMock finds the first mock that matches the request
@@ -84,14 +84,4 @@ func (p *AnthropicProvider) requestsMatch(expected AnthropicRequestMatch, actual
 		panic("not implemented")
 	}
 	return false
-}
-
-// handleNonStreamingResponse sends a JSON response
-func (p *AnthropicProvider) handleNonStreamingResponse(w http.ResponseWriter, response interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
-	}
 }
